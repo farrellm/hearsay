@@ -96,6 +96,37 @@ class EpisodeFields(TypedDict):
     persons: list[PersonRow]
 
 
+class EpisodeRow(TypedDict):
+    """The parts of an episode the pipeline works from."""
+
+    id: int
+    feed_id: int
+    title: str | None
+    enclosure_url: str
+    enclosure_type: str | None
+    duration_s: float | None
+    audio_sha256: str | None
+    audio_path: str | None  # relative to the data directory
+    audio_size: int | None
+    audio_url: str | None
+    audio_type: str | None
+    audio_changes: int
+    state: str
+    error: str | None
+
+
+class EpisodeUpdate(TypedDict, total=False):
+    duration_s: float | None
+    audio_sha256: str | None
+    audio_path: str | None
+    audio_size: int | None
+    audio_url: str | None
+    audio_type: str | None
+    audio_changes: int
+    state: str
+    error: str | None
+
+
 class EpisodeSummary(TypedDict):
     """An episode in a show's list."""
 
@@ -104,9 +135,21 @@ class EpisodeSummary(TypedDict):
     published_at: str | None
     duration_s: float | None
     state: str
+    error: str | None  # why its latest stage failed
     artwork: str | None
     task: TaskStatus | None  # the download task's status, if it has been queued
     finished: bool
+
+
+class TaskRow(TypedDict):
+    id: int
+    episode_id: int
+    stage: str
+    status: TaskStatus
+    priority: int
+    attempts: int  # failed runs so far
+    not_before: str | None  # a retry waits until then
+    last_error: str | None
 
 
 class ImageRow(TypedDict):

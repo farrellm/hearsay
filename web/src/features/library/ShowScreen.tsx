@@ -90,14 +90,25 @@ function EpisodeRow({
     episode.published_at && formatDate(episode.published_at),
     episode.duration_s !== null && formatDuration(episode.duration_s),
   ].filter(Boolean)
+  const failed = episode.task === 'error'
 
   return (
     <li className={episode.finished ? 'row episode-row played' : 'row episode-row'}>
       <span className="row-text">
         <span className="row-title episode-title">{episode.title ?? 'Untitled episode'}</span>
         <span className="row-note">{meta.join(', ')}</span>
+        {failed && episode.error && <span className="row-note alert wrap">{episode.error}</span>}
       </span>
-      {manual && episode.task === null && episode.state === 'discovered' ? (
+      {failed ? (
+        <button
+          type="button"
+          className="btn small"
+          disabled={transcribe.isPending}
+          onClick={() => transcribe.mutate()}
+        >
+          Try again
+        </button>
+      ) : manual && episode.task === null && episode.state === 'discovered' ? (
         <button
           type="button"
           className="btn small"
@@ -114,15 +125,15 @@ function EpisodeRow({
 }
 
 /** One mark for where an episode is (docs/ui.md §4.2): nothing, hollow (downloaded), filled
- * (transcribed), a ring (being worked on), or an alert (failed). */
+ * (transcribed), or a ring (being worked on). A failure is the row's note and Try again. */
 function StateMark({ episode }: { episode: EpisodeSummary }) {
   const { state, task } = episode
   let kind: string | null = null
   let label = ''
-  if (task === 'error') [kind, label] = ['failed', 'Failed']
-  else if (['transcribed', 'indexed', 'extracted'].includes(state))
+  if (['transcribed', 'indexed', 'extracted'].includes(state))
     [kind, label] = ['done', 'Transcribed']
-  else if (task === 'pending' || task === 'running') [kind, label] = ['working', 'Queued']
+  else if (task === 'running') [kind, label] = ['working', 'Downloading']
+  else if (task === 'pending') [kind, label] = ['working', 'Queued']
   else if (state !== 'discovered') [kind, label] = ['downloaded', 'Downloaded']
   if (kind === null) return null
   return <span className={`state-mark ${kind}`} role="img" aria-label={label} title={label} />

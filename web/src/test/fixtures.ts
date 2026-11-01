@@ -21,6 +21,7 @@ function episode(id: number, changes: Partial<EpisodeSummary> = {}): EpisodeSumm
     published_at: '2026-10-28T14:00:00+00:00',
     duration_s: 4320,
     state: 'discovered',
+    error: null,
     artwork: null,
     task: null,
     finished: false,

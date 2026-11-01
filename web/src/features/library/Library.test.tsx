@@ -134,6 +134,30 @@ describe('Library', () => {
     expect(sentJson(fetchMock, 'POST /api/episodes/1/process')).toEqual({ now: false })
   })
 
+  it('shows why a download failed and tries it again', async () => {
+    const detail = gridlockDetail()
+    detail.episodes = detail.episodes.map((e) =>
+      e.id === 1
+        ? { ...e, task: 'error', error: 'Download failed: cdn.example answered HTTP 404.' }
+        : e,
+    )
+    const fetchMock = mockApi({
+      'GET /api/feeds': () => [GRIDLOCK],
+      'GET /api/feeds/1': () => detail,
+      'POST /api/episodes/1/process': () => new Response(null, { status: 204 }),
+    })
+    renderApp()
+    await userEvent.click(await screen.findByRole('button', { name: /Gridlock/ }))
+    const [, , row] = (await screen.findAllByRole('listitem')) as [
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+    ]
+    expect(row).toHaveTextContent('Download failed: cdn.example answered HTTP 404.')
+    await userEvent.click(within(row).getByRole('button', { name: 'Try again' }))
+    expect(sentJson(fetchMock, 'POST /api/episodes/1/process')).toEqual({ now: false })
+  })
+
   it('shows a feed error and unsubscribes after confirming', async () => {
     let gone = false
     mockApi({

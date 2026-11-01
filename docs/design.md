@@ -1,8 +1,10 @@
 # Hearsay — Design Document
 
 Status: draft, 2026-11-01. Phase 0 (spikes) is done; see [spikes.md](spikes.md). M1.1
-(skeleton) is built and deployed as `hearsay.service`. M1.2 (feeds) is built; its check (your
-OPML polling for a day without unexplained errors) waits on deploying it.
+(skeleton) is built and deployed as `hearsay.service`. M1.2 (feeds) is deployed; its check
+(your OPML polling for a day without unexplained errors) is running. M1.3 (downloads) is
+built, and its check passed on a scratch server (killed mid-download with `kill -9`, it resumed
+with `Range` on restart and stored the same sha256 as a clean download).
 
 ## 1. Overview
 
@@ -357,6 +359,7 @@ for ASR only.
 data/
   hearsay.db                       SQLite (WAL): metadata, FTS5, sqlite-vec
   audio/ab/abcdef….mp3             originals, content-addressed by sha256
+  audio/.partial/<episode_id>.part downloads in progress (+ .json: URL, validators, length)
   prepared/ab/abcdef….opus         16 kHz mono, for the GPU; deleted once transcribed
   transcripts/<episode_id>/<ver>.json.zst
   images/<sha256>-{512,128}.webp

@@ -14,12 +14,15 @@ from typing import Any, Unpack, cast
 
 from hearsay.db.rows import (
     EpisodeFields,
+    EpisodeRow,
     EpisodeSummary,
+    EpisodeUpdate,
     FeedRow,
     FeedSummary,
     FeedUpdate,
     ImageRow,
     Policy,
+    TaskRow,
 )
 from hearsay.db.schema import migrate, schema_version
 
@@ -123,15 +126,17 @@ class Database:
 
     # -- episodes --------------------------------------------------------------------------
 
-    def upsert_episode(self, feed_id: int, ep: EpisodeFields) -> tuple[int, bool]:
-        """Insert or refresh an episode by its guid. Returns its id and whether it is new.
+    def upsert_episode(self, feed_id: int, ep: EpisodeFields) -> tuple[int, bool, bool]:
+        """Insert or refresh an episode by its guid. Returns its id, whether it is new, and
+        whether its enclosure moved after its audio was downloaded.
 
-        A changed enclosure URL keeps the episode's identity (design.md §4). The feed's
-        duration is replaced only until the file itself has been probed.
+        A changed enclosure URL keeps the episode's identity, and its downloaded audio
+        (design.md §4). The feed's duration is replaced only until the file has been probed.
         """
         values = {**ep, "persons": json.dumps(ep["persons"]) if ep["persons"] else None}
         row = self.conn.execute(
-            "SELECT id FROM episodes WHERE feed_id = ? AND guid = ?", [feed_id, ep["guid"]]
+            "SELECT id, enclosure_url, audio_sha256 FROM episodes WHERE feed_id = ? AND guid = ?",
+            [feed_id, ep["guid"]],
         ).fetchone()
         if row is None:
             cols = ", ".join(values)
@@ -141,8 +146,9 @@ class Database:
                 [feed_id, *values.values(), now()],
             )
             assert cur.lastrowid is not None
-            return cur.lastrowid, True
+            return cur.lastrowid, True, False
         id_: int = row[0]
+        moved = row["audio_sha256"] is not None and row["enclosure_url"] != ep["enclosure_url"]
         del values["guid"]
         duration = values.pop("duration_s")
         self._update("episodes", id_, values)
@@ -150,7 +156,7 @@ class Database:
             "UPDATE episodes SET duration_s = ? WHERE id = ? AND audio_sha256 IS NULL",
             [duration, id_],
         )
-        return id_, False
+        return id_, False, moved
 
     def newest_episodes(self, feed_id: int, n: int) -> list[int]:
         rows = self.conn.execute(
@@ -158,6 +164,23 @@ class Database:
             [feed_id, n],
         )
         return [r[0] for r in rows]
+
+    def episode(self, id_: int) -> EpisodeRow | None:
+        row = self.conn.execute(
+            "SELECT id, feed_id, title, enclosure_url, enclosure_type, duration_s, audio_sha256,"
+            " audio_path, audio_size, audio_url, audio_type, audio_changes, state, error"
+            " FROM episodes WHERE id = ?",
+            [id_],
+        ).fetchone()
+        return None if row is None else cast("EpisodeRow", dict(row))
+
+    def update_episode(self, id_: int, **fields: Unpack[EpisodeUpdate]) -> None:
+        self._update("episodes", id_, fields)
+
+    def audio_in_use(self, path: str) -> bool:
+        """Whether any episode's stored audio is the file at `path`."""
+        row = self.conn.execute("SELECT 1 FROM episodes WHERE audio_path = ?", [path]).fetchone()
+        return row is not None
 
     def episode_exists(self, id_: int) -> bool:
         return (
@@ -167,7 +190,7 @@ class Database:
     def feed_episodes(self, feed_id: int) -> list[EpisodeSummary]:
         rows = self.conn.execute(
             """
-            SELECT e.id, e.title, e.published_at, e.duration_s, e.state,
+            SELECT e.id, e.title, e.published_at, e.duration_s, e.state, e.error,
                 coalesce(ei.sha256, fi.sha256) AS artwork,
                 (SELECT t.status FROM tasks t WHERE t.episode_id = e.id AND t.stage = 'download'
                     ORDER BY t.id DESC LIMIT 1) AS task,
@@ -217,6 +240,68 @@ class Database:
         )
         return False
 
+    def retry(self, episode_id: int, stage: str, priority: int) -> bool:
+        """Queue a failed task again, from scratch. Returns whether there was one."""
+        cur = self.conn.execute(
+            "UPDATE tasks SET status = 'pending', attempts = 0, not_before = NULL,"
+            " last_error = NULL, priority = max(priority, ?), updated_at = ?"
+            " WHERE episode_id = ? AND stage = ? AND status = 'error'",
+            [priority, now(), episode_id, stage],
+        )
+        return cur.rowcount > 0
+
+    def task(self, id_: int) -> TaskRow | None:
+        row = self.conn.execute(f"SELECT {_TASK_COLS} FROM tasks WHERE id = ?", [id_]).fetchone()  # noqa: S608
+        return None if row is None else cast("TaskRow", dict(row))
+
+    def reset_running(self, stage: str) -> int:
+        """Put back tasks left running by a server that stopped: no runner owns them now.
+        Returns how many there were."""
+        cur = self.conn.execute(
+            "UPDATE tasks SET status = 'pending', updated_at = ?"
+            " WHERE stage = ? AND status = 'running'",
+            [now(), stage],
+        )
+        return cur.rowcount
+
+    def claim(self, stage: str, at: str) -> TaskRow | None:
+        """Mark the next runnable task of `stage` running and return it: highest priority, then
+        oldest, skipping retries whose `not_before` is after `at`."""
+        row = self.conn.execute(
+            f"""
+            UPDATE tasks SET status = 'running', updated_at = ?
+            WHERE id = (
+                SELECT id FROM tasks
+                WHERE stage = ? AND status = 'pending' AND (not_before IS NULL OR not_before <= ?)
+                ORDER BY priority DESC, created_at, id LIMIT 1)
+            RETURNING {_TASK_COLS}
+            """,  # noqa: S608
+            [now(), stage, at],
+        ).fetchone()
+        return None if row is None else cast("TaskRow", dict(row))
+
+    def next_retry_at(self, stage: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT min(not_before) FROM tasks WHERE stage = ? AND status = 'pending'", [stage]
+        ).fetchone()
+        value: str | None = row[0]
+        return value
+
+    def finish_task(self, id_: int, input_ref: str | None = None) -> None:
+        self.conn.execute(
+            "UPDATE tasks SET status = 'done', input_ref = ?, last_error = NULL, not_before = NULL,"
+            " updated_at = ? WHERE id = ?",
+            [input_ref, now(), id_],
+        )
+
+    def fail_task(self, id_: int, error: str, retry_at: str | None) -> None:
+        """Record a failed run: pending again from `retry_at`, or failed for good if None."""
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, attempts = attempts + 1, last_error = ?, not_before = ?,"
+            " updated_at = ? WHERE id = ?",
+            ["error" if retry_at is None else "pending", error, retry_at, now(), id_],
+        )
+
     # -- images ----------------------------------------------------------------------------
 
     def image(self, url: str) -> ImageRow | None:
@@ -230,6 +315,9 @@ class Database:
             " sha256 = excluded.sha256, fetched_at = excluded.fetched_at, error = excluded.error",
             [url, sha256, fetched_at, error],
         )
+
+
+_TASK_COLS = "id, episode_id, stage, status, priority, attempts, not_before, last_error"
 
 
 def _rows[T](rows: Iterable[sqlite3.Row], kind: type[T]) -> list[T]:

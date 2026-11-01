@@ -9,5 +9,14 @@ export const queries = {
   health: () =>
     queryOptions({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 }),
   feeds: () => queryOptions({ queryKey: ['feeds'], queryFn: api.feeds }),
-  feed: (id: number) => queryOptions({ queryKey: ['feeds', id], queryFn: () => api.feed(id) }),
+  feed: (id: number) =>
+    queryOptions({
+      queryKey: ['feeds', id],
+      queryFn: () => api.feed(id),
+      // Until live events arrive (M2.4), follow downloads by asking again while any are going.
+      refetchInterval: (query) =>
+        query.state.data?.episodes.some((e) => e.task === 'pending' || e.task === 'running')
+          ? 5_000
+          : false,
+    }),
 }

@@ -67,6 +67,10 @@ button.row {
   color: var(--alert);
 }
 
+.row-note.wrap {
+  white-space: normal;
+}
+
 .row-count {
   color: var(--graphite);
   font-variant-numeric: tabular-nums;
@@ -135,11 +139,6 @@ button.row {
 .state-mark.working {
   border-color: var(--rule);
   border-top-color: var(--pen);
-}
-
-.state-mark.failed {
-  border-color: var(--alert);
-  background: var(--alert);
 }
 
 /* ── Add a show ─────────────────────────────────────────────────────────────── */

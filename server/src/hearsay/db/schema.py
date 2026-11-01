@@ -167,6 +167,15 @@ MIGRATIONS: tuple[str, ...] = (
         error TEXT
     );
     """,
+    # 3: M1.3 downloads: where the stored audio came from, and how often its bytes changed.
+    """
+    -- The URL the audio finally came from (after redirects) and its Content-Type.
+    ALTER TABLE episodes ADD COLUMN audio_url TEXT;
+    ALTER TABLE episodes ADD COLUMN audio_type TEXT;
+    -- Times a download of this episode gave different bytes than the one before (a sign of
+    -- dynamic ad insertion, design.md §4).
+    ALTER TABLE episodes ADD COLUMN audio_changes INTEGER NOT NULL DEFAULT 0;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

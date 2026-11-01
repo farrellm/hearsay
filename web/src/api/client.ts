@@ -84,6 +84,8 @@ export interface EpisodeSummary {
   published_at: string | null
   duration_s: number | null
   state: string
+  /** Why its latest stage failed, e.g. "Download failed: …". */
+  error: string | null
   artwork: string | null
   task: TaskStatus | null
   finished: boolean

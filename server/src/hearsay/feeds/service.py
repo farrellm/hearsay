@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import logging
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -65,10 +66,12 @@ class Feeds:
         http: httpx2.AsyncClient,
         images: ImageCache,
         rng: random.Random | None = None,
+        queued: Callable[[], None] = lambda: None,
     ) -> None:
         self.db = db
         self.http = http
         self.images = images
+        self.queued = queued  # called after downloads were queued
         self.rng = rng or random.Random()  # noqa: S311 (jitter, not secrets)
         self._wake = asyncio.Event()
         self._locks: dict[int, asyncio.Lock] = {}
@@ -147,8 +150,15 @@ class Feeds:
         return export_opml([Outline(f["url"], f["title"]) for f in self.db.feeds()])
 
     def process(self, episode_id: int, *, now: bool = False) -> None:
-        """Queue an episode you picked (design.md §10 `process`)."""
-        self.db.enqueue(episode_id, DOWNLOAD, Priority.NOW if now else Priority.NEW)
+        """Queue an episode you picked (design.md §10 `process`). A download that failed for
+        good is tried again from scratch."""
+        priority = Priority.NOW if now else Priority.NEW
+        with self.db.transaction():
+            if not self.db.enqueue(episode_id, DOWNLOAD, priority) and self.db.retry(
+                episode_id, DOWNLOAD, priority
+            ):
+                self.db.update_episode(episode_id, error=None)
+        self.queued()
 
     # -- polling ---------------------------------------------------------------------------
 
@@ -213,6 +223,7 @@ class Feeds:
             if parsed is not None:
                 self._store(feed, parsed)
         self.db.update_feed(feed_id, next_poll_at=self._next_poll(feed_id))
+        self.queued()
 
     def _store(self, feed: FeedRow, parsed: ParsedFeed) -> None:
         feed_id = feed["id"]
@@ -228,9 +239,16 @@ class Feeds:
         )
         new = []
         for episode in parsed.episodes:
-            id_, inserted = self.db.upsert_episode(feed_id, _fields(episode))
+            id_, inserted, moved = self.db.upsert_episode(feed_id, _fields(episode))
             if inserted:
                 new.append((id_, episode))
+            elif moved:
+                # Same guid, so the same episode: keep the audio already downloaded (§4).
+                log.info(
+                    "episode %d's audio moved to %s; keeping the stored copy",
+                    id_,
+                    episode.enclosure_url,
+                )
         if feed["first_polled_at"] is None:
             for id_ in self.db.newest_episodes(feed_id, feed["backfill_n"]):
                 self.db.enqueue(id_, DOWNLOAD, Priority.BACKFILL)
