@@ -1,0 +1,24 @@
+[project]
+name = "hearsay-server"
+version = "0.1.0"
+description = "Hearsay home server: feeds, downloads, player API, GPU scheduler, search"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "hearsay-worker",  # spec.py types the worker's output for both sides
+    "fastapi>=0.141",
+    "pydantic>=2.11",
+    "uvicorn[standard]>=0.54",
+]
+
+[tool.uv.sources]
+hearsay-worker = { workspace = true }
+
+[project.scripts]
+hearsay = "hearsay.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "hearsay"

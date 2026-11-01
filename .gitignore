@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node / web (see also web/.gitignore)
+node_modules/
+web/dist/
+coverage/
+
+# Hearsay runtime data and local config (audio, transcripts, SSH and VAPID keys, tokens)
+data/
+hearsay.toml
+*.key
+.env
+.env.*
+
+# Browser automation logs and snapshots (Playwright MCP)
+.playwright-mcp/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+
+# Pinned tools (`make tools`)
+/bin/

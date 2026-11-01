@@ -1,0 +1,39 @@
+# Hearsay server configuration. Copy to hearsay.toml (git-ignored) and adjust.
+# Relative paths are resolved against this file's directory.
+
+data_dir = "data"          # SQLite, audio, transcripts, images, SSH key, VAPID key
+host = "127.0.0.1"         # loopback only: exposed with tailscale serve --https=8452
+port = 8452
+# web_dist = "web/dist"    # built PWA (default: <repo>/web/dist)
+
+[colab]
+binary = "colab"           # uv tool install google-colab-cli
+# auth = "adc"             # or "oauth2"; default: the CLI's own default
+session_name = "hearsay"   # Hearsay only ever touches this session (design.md §5.3)
+# ssh_key = "data/ssh/id_ed25519"   # generated on first session start if missing
+worker_port = 8765
+
+[scheduler]                # design.md §5.3
+min_batch_minutes = 120    # start a session once this much audio is waiting…
+max_wait_hours = 6         # …or once the oldest waiting episode is this old
+idle_grace_minutes = 5     # stop after the queue has been empty this long
+max_session_hours = 10     # rotate to a fresh VM before Colab's lifetime limit
+gpus = ["T4"]              # tried in order when `colab new` finds no GPU
+# keepalive_exec_minutes = 30   # off: Phase 0 found an idle kernel isn't reclaimed
+
+[budget]
+# units_per_month = 50     # monthly compute-unit cap for automatic sessions (default: none)
+min_balance = 0            # never start a session below this account balance
+
+[huggingface]
+# Access token for the gated pyannote model (`hf auth login` writes it).
+# token_file = "~/.cache/huggingface/token"
+
+[anthropic]
+# api_key_file = "~/.config/anthropic/key"   # set to enable the hosted extraction provider
+# model = "claude-haiku-5-5"
+
+[push]
+# Contact for the push services (Apple, Google, Mozilla); use a mailto: you read.
+subject = "mailto:hearsay@localhost"
+# key_file = "data/vapid_private.pem"   # VAPID key pair, generated on first use

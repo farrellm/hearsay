@@ -1,6 +1,7 @@
 # Hearsay — Design Document
 
-Status: draft, 2026-11-01. Phase 0 (spikes) is done except the iPhone check; see [spikes.md](spikes.md).
+Status: draft, 2026-11-01. Phase 0 (spikes) is done; see [spikes.md](spikes.md). M1.1
+(skeleton) is built and deployed as `hearsay.service`.
 
 ## 1. Overview
 
@@ -518,8 +519,9 @@ of T4 time" prompts, and the compute-unit estimates.
 
 The visual design, screen layouts and interaction details are in [ui.md](ui.md).
 
-- **Stack:** React 19, Vite, TypeScript, TanStack Query and `vite-plugin-pwa`, matching
-  Degas, so conventions, components and the deploy recipe carry over. Transcripts use a
+- **Stack:** React 19, Vite, TypeScript, TanStack Query, and a hand-written manifest and
+  service worker (`web/public/`), matching Degas, so conventions, components and the deploy
+  recipe carry over. Transcripts use a
   virtualized list (`@tanstack/react-virtual`).
 - **Tabs:** **Library** (shows, then episodes), **Search**, **Books** (with Media and People
   as segments), and **Up Next**. The header has a GPU chip: idle, backlog N h, or draining

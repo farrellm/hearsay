@@ -10,7 +10,7 @@ Status by milestone:
 | M0.1 ASR benchmark | **Done**: Whisper turbo + MMS_FA, pyannote `community-1` diarization, T4. The hand-marked word check is still open (§M0.1.4). |
 | M0.2 Colab round trip | **Done.** The keepalive decision is made. The maximum session lifetime was not measured (your call): `max_session_hours = 10` |
 | M0.3 Timeline drift | **Done.** No drift. |
-| M0.4 iOS background playback | **Built, waiting on you.** It needs a 2 h test on the phone (§M0.4) |
+| M0.4 iOS background playback | **Done.** Passed on the phone (iOS 18.7, standalone); no fallback needed |
 | M0.5 Embedding model | **Done.** `bge-small-en-v1.5`, pinned; 16 ms per query on the home box |
 
 Spend: 2.7 compute units in all (T4 about 1.5 h, L4 about 25 min, CPU runtime about 50 min).
@@ -233,7 +233,7 @@ file is 12–17 MB per hour (as planned). Note: on LAME-tagged MP3s, ffprobe rep
 it, the player is off by at most 25 ms, well inside the budget. M0.4's seek probes would show
 anything larger.
 
-## M0.4 iOS background playback: waiting on you
+## M0.4 iOS background playback
 
 The spike is `spike/ios/` (a FastAPI app with Range support, one long-lived `<audio>`,
 Media Session, and no service worker). It runs on **https://agda.tail0cb6d.ts.net:8452**,
@@ -251,8 +251,23 @@ To do on the iPhone:
 
 The page logs a heartbeat every 10 s while it's playing, plus play/pause/visibility events,
 to `spike/data/ios_log.jsonl`. Gaps between `wall` and `ct` show whether playback kept running
-while the phone was locked. Tell me when you've done it and I'll read the log and finish this
-section.
+while the phone was locked.
+
+**Result (2026-11-01): passed, so the §14 fallback isn't needed.** You reported that everything
+worked on the phone: iOS 18.7, running as a home-screen app. The log (27 events,
+13:40–15:16) shows:
+- **Seek probes:** all three words (Planet Money at 1198.7 s, MBMBaM at 1228.8 s and 404.3 s)
+  started 0.3 s before the word, as designed, and you heard each word in time. So Safari
+  doesn't add a visible offset on the MP3s, matching M0.3.
+- **AAC:** it loaded, played, paused and resumed normally.
+- **Background:** playback kept going across a hide/show (`ct` advanced 3.1 s over 3.1 s
+  of wall time while the app was hidden).
+- **What the log doesn't show:** the 2 h locked run. Page timers stop while the phone is
+  locked, so there are no heartbeats from that time, and the long MP3's logged plays are
+  seconds long. Its success rests on your report. Keep an eye on locked playback during
+  M1.4's week of use.
+
+The spike service is stopped, and port 8452 now belongs to `hearsay.service`.
 
 ## M0.5 Embedding model
 

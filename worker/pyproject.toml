@@ -1,0 +1,18 @@
+[project]
+name = "hearsay-worker"
+version = "0.1.0"
+description = "Hearsay GPU worker: HTTP server running on the Colab VM (ASR, alignment, diarization)"
+# Must match the Colab runtime's Python (3.13 as of 2026-11).
+requires-python = ">=3.13,<3.14"
+# The VM never installs this package (the bundle is a tarball of the source), so these only
+# describe what the code imports, for local installs and tests. GPU deps arrive in M2.1.
+dependencies = [
+    "pydantic>=2.11",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "hearsay_worker"
