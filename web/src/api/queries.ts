@@ -8,4 +8,6 @@ import { api } from './client'
 export const queries = {
   health: () =>
     queryOptions({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 }),
+  feeds: () => queryOptions({ queryKey: ['feeds'], queryFn: api.feeds }),
+  feed: (id: number) => queryOptions({ queryKey: ['feeds', id], queryFn: () => api.feed(id) }),
 }

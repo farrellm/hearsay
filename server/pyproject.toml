@@ -8,6 +8,10 @@ dependencies = [
     "fastapi>=0.141",
     "pydantic>=2.11",
     "uvicorn[standard]>=0.54",
+    "feedparser>=6.0.14",
+    "defusedxml>=0.7.1",
+    "httpx2>=2.16.0",
+    "pillow>=13.0.0",
 ]
 
 [tool.uv.sources]

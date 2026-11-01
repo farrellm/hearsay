@@ -5,9 +5,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from hearsay.errors import HearsayError
+from hearsay.feeds.parser import FeedError
+from hearsay.feeds.service import AlreadySubscribedError
 
 # Errors not listed here are bugs or outages a request can't fix, and stay a 500.
-STATUS: dict[type[HearsayError], int] = {}
+STATUS: dict[type[HearsayError], int] = {
+    FeedError: 422,
+    AlreadySubscribedError: 409,
+}
 
 
 async def _answer(_request: Request, exc: Exception) -> JSONResponse:

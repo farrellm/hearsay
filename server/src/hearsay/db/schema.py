@@ -144,6 +144,29 @@ MIGRATIONS: tuple[str, ...] = (
         value TEXT NOT NULL
     );
     """,
+    # 2: M1.2 feeds: poll scheduling, Podcasting 2.0 fields, and the image cache.
+    """
+    -- When the poller next fetches the feed (NULL: now), and the first time a poll succeeded
+    -- (NULL: never, so the next success applies the backfill instead of treating every
+    -- episode as new).
+    ALTER TABLE feeds ADD COLUMN next_poll_at TEXT;
+    ALTER TABLE feeds ADD COLUMN first_polled_at TEXT;
+    ALTER TABLE feeds ADD COLUMN podcast_guid TEXT;
+    CREATE INDEX feeds_next_poll ON feeds (next_poll_at);
+
+    ALTER TABLE episodes ADD COLUMN chapters_url TEXT;
+    ALTER TABLE episodes ADD COLUMN feed_transcript_type TEXT;
+    ALTER TABLE episodes ADD COLUMN persons TEXT;  -- JSON [{name, role, href}]
+
+    -- Remote artwork by its URL. `sha256` names the cached files
+    -- (images/<sha256>-{512,128}.webp); NULL with `error` set when the fetch failed.
+    CREATE TABLE images (
+        url TEXT PRIMARY KEY,
+        sha256 TEXT,
+        fetched_at TEXT NOT NULL,
+        error TEXT
+    );
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

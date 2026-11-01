@@ -1,6 +1,16 @@
 """SQLite metadata store (design.md §7.2)."""
 
 from hearsay.db.database import Database, now
+from hearsay.db.rows import EpisodeFields, EpisodeSummary, FeedRow, FeedSummary, Policy
 from hearsay.db.schema import SCHEMA_VERSION
 
-__all__ = ["SCHEMA_VERSION", "Database", "now"]
+__all__ = [
+    "SCHEMA_VERSION",
+    "Database",
+    "EpisodeFields",
+    "EpisodeSummary",
+    "FeedRow",
+    "FeedSummary",
+    "Policy",
+    "now",
+]

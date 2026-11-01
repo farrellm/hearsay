@@ -12,9 +12,9 @@ makes them searchable, with a player tied to the transcript.
 
 | Path | What |
 |---|---|
-| `server/` | Home server (FastAPI + SQLite), package `hearsay`: `api/` routers and error statuses · `db/` schema migrations and queries · `config.py` · `services.py` wiring |
+| `server/` | Home server (FastAPI + SQLite), package `hearsay`: `api/` routers and error statuses · `db/` schema migrations and queries · `feeds/` RSS, OPML and the poller · `media/` the artwork cache · `config.py` · `services.py` wiring |
 | `worker/` | GPU worker that runs on the Colab VM, package `hearsay_worker` (`spec.py`: the transcript types both sides share) |
-| `web/` | React + Vite PWA: `src/app` shell · `src/api` typed client and query options · `src/styles` tokens |
+| `web/` | React + Vite PWA: `src/app` shell · `src/features/<part>` screens · `src/components`, `src/hooks`, `src/lib` shared · `src/api` typed client and query options · `src/styles` tokens |
 | `deploy/` | systemd user unit |
 | `spike/` | Throwaway Phase 0 scripts, kept for reference (not linted) |
 

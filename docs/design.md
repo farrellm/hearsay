@@ -1,7 +1,8 @@
 # Hearsay — Design Document
 
 Status: draft, 2026-11-01. Phase 0 (spikes) is done; see [spikes.md](spikes.md). M1.1
-(skeleton) is built and deployed as `hearsay.service`.
+(skeleton) is built and deployed as `hearsay.service`. M1.2 (feeds) is built; its check (your
+OPML polling for a day without unexplained errors) waits on deploying it.
 
 ## 1. Overview
 
