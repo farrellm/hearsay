@@ -50,7 +50,7 @@ and stops the session.
 └──────────────────┘                           │ • feed poller, downloader    │ ◀─────────────────────────▶ │   127.0.0.1:8765)          │
                                                │ • work queue + GPU scheduler │  scp audio up, JSON down    │ • ASR + alignment +        │
                                                │ • session manager (colabkit) │                             │   diarization              │
-                                               │ • FTS5 + sqlite-vec index    │                             │ • embedder (batch)         │
+                                               │ • FTS5 + sqlite-vec index    │                             │ • embedder (later)         │
                                                │ • query embedder (CPU)       │                             │ • LLM (vLLM), optional     │
                                                │ • LLM client (Claude API),   │                             └────────────────────────────┘
                                                │   optional                   │ ── HTTPS ──▶ podcast hosts, Open Library
@@ -88,11 +88,8 @@ stage can run once its inputs exist, so a failure retries only that stage.
 
 ```
 discovered ─▶ downloaded ─▶ prepared ─▶ transcribed ─▶ indexed ─▶ extracted
-   (feed)      (server)     (server)     (GPU)         (server*)   (LLM)
+   (feed)      (server)     (server)     (GPU)         (server)    (LLM)
 ```
-
-\* Chunk embeddings are made on the GPU in the same worker call as ASR when a session is up.
-The server can also make them on its CPU (§5.2).
 
 1. **Discover** (server). The poller fetches each feed on its interval (§4) and upserts
    episodes keyed by `guid`, or by the enclosure URL when there's no guid.
@@ -155,7 +152,7 @@ The worker exposes:
 | POST | `/transcribe` | `{episode_id, remote_path, language?, diarize, num_speakers?}` → job id |
 | GET | `/jobs/{id}` | Status and progress (fraction of audio processed) |
 | GET | `/jobs/{id}/events` | SSE progress |
-| POST | `/embed` | `{texts[], model}` → vectors (batch) |
+| POST | `/embed` | `{texts[], model}` → vectors (batch). Not in v1 (§5.2) |
 | POST | `/llm/extract` | `{transcript_text, schema, prompt}` → JSON (only when the LLM runs locally) |
 | GET | `/state` | In-flight jobs and finished results not yet collected (for recovery) |
 
@@ -175,6 +172,10 @@ compute.
   token). It is on by default, but you can turn it off per feed (solo shows). Speakers come
   back as `S0`, `S1`, …. You can rename a speaker per episode, and a per-feed default name
   map ("S0 is usually the host") is applied to new episodes as a guess, not as a fact.
+  Re-transcribing relabels everyone, so names carry over by time overlap: each new speaker
+  takes the name of the old speaker they share the most speaking time with, if that's over
+  half of the new speaker's time. Carried-over names keep their guessed or confirmed state.
+  Speakers with no match fall back to the per-feed map.
 - **Alternative to benchmark:** NVIDIA Parakeet TDT (English only). It is much faster and has
   native word timestamps. If the library is mostly English and it wins on accuracy, it
   becomes the English default, with Whisper as the fallback for other languages.
@@ -209,11 +210,13 @@ A segment is roughly one sentence, split at speaker changes and pauses, and neve
 - **Documents:** chunks of 45–60 s, cut at segment boundaries, with a 1-segment overlap and
   the speaker names inline. Each chunk is prefixed with the show and episode title, for
   context. One hour gives about 70 chunks.
-- When a session is up, the worker embeds an episode's chunks right after transcribing it, at
-  almost no extra cost. Otherwise the server does it on its CPU (about 70 chunks per hour of
-  audio, a few seconds of work). Both sides load the same model at the same revision. The
-  model id is stored with each vector, and changing the model re-embeds everything in the
-  background.
+- In v1 the server embeds every chunk on its CPU, in the index stage. That's about 70 chunks
+  per hour of audio, a few seconds of work, and it means only one copy of the model has to be
+  kept at a pinned revision. The model id is stored with each vector, and changing the model
+  re-embeds everything in the background.
+- Later, if a model change makes re-embedding the whole library on the CPU too slow, the
+  worker's `/embed` can do the bulk re-embed during a drain. It must load the same model at
+  the same revision.
 
 ### 5.3 Session scheduling
 
@@ -242,6 +245,11 @@ Degas starts sessions by hand. Hearsay starts them from the backlog.
 - **Stop** when the queue is empty and stays empty for `idle_grace_minutes` (default 5, so a
   feed poll that lands mid-drain doesn't cause a restart), or when the budget runs out. Stop
   with `cli.stop(session)` and confirm with `status`.
+- **Session lifetime:** Colab VMs have a maximum lifetime (Phase 0 measures it). The
+  scheduler sets `max_session_hours` a safe margin below it. Once a session passes that age,
+  it stops handing out new episodes, lets the ones in flight finish, stops, and starts a fresh
+  session if the backlog still meets the start rule. A long backfill becomes several
+  sessions instead of one that gets cut off.
 - **Priority:** Process now > episodes in your Up Next > new episodes from `auto` feeds,
   newest first > backfill, newest first.
 - **Budget:** `colab usage` gives the account's balance and burn rate, as in Degas. The rate
@@ -258,7 +266,9 @@ Degas starts sessions by hand. Hearsay starts them from the backlog.
   `colab status`, re-opens the tunnel and calls `GET /state` to collect finished results.
   Anything in flight that's unaccounted for goes back to the queue. If the VM is gone, the
   session is marked ended and its tasks are re-queued. Every task is idempotent: it is keyed
-  by episode and stage, and a transcribe result for a superseded file is discarded.
+  by episode and stage, and records the input it was run on (`tasks.input_ref`). A result
+  whose input no longer matches the episode (a re-downloaded file, or a newer transcript
+  version) is discarded.
 - **Liveness:** the same open question as in Degas: whether a VM whose kernel is idle and
   only the SSH-launched worker is busy gets reclaimed. Whatever answer Degas settles on, use
   it. If it's needed, send a trivial `colab exec` every few minutes during a drain.
@@ -344,20 +354,28 @@ data/
   feed_transcript_url, image, state (the furthest finished stage), error.
 - **`tasks`**: id, episode_id, stage (`download`, `prepare`, `transcribe`, `index`,
   `extract:<kind>`), status (`pending`, `running`, `done`, `error`), priority, attempts,
-  last_error, session_id?, created_at, updated_at. Unique on (episode_id, stage) for
-  incomplete tasks.
+  last_error, input_ref, session_id?, created_at, updated_at. `input_ref` names the exact
+  input: the audio sha256 for `prepare` and `transcribe`, and the transcript id for `index`
+  and `extract:*`. Unique on (episode_id, stage) for incomplete tasks.
 - **`transcripts`**: id, episode_id, version, engine (JSON), language, path, word_count,
   created_at, is_current.
 - **`segments`**: transcript_id, i, start, end, speaker, text. Words stay in the JSON file:
   about 10k words per hour would make per-word rows the biggest table by far, for no query
   that needs them.
 - **`segments_fts`**: an FTS5 table over `segments.text` (external content). Tokenizer
-  `porter unicode61 remove_diacritics 2`.
+  `porter unicode61 remove_diacritics 2`. Only the current transcript version's segments are
+  in the index. Switching `is_current` deletes the old version's rows from `segments_fts` and
+  `chunks_vec` and inserts the new ones, in one transaction. Older versions keep their
+  `segments` rows, but are never searched.
 - **`chunks`**: id, transcript_id, start, end, text. **`chunks_vec`**: a sqlite-vec `vec0`
   table holding (chunk_id, embedding), along with the model id.
 - **`speakers`**: transcript_id, label (`S0`), name (yours or guessed), guessed (bool).
-- **`items`**: id, episode_id, kind, data (JSON), t, quote, entity_id?, prompt_version,
-  model, hidden (bool, for "this is wrong").
+  Labels are not stable across transcript versions (§5.1).
+- **`items`**: id, episode_id, transcript_id, kind, data (JSON), t, quote, entity_id?,
+  prompt_version, model, hidden (bool, for "this is wrong"). `t` is only valid on its own
+  transcript. Queries show only items from the current transcript. A new transcript version
+  queues re-extraction, and `hidden` and manual entity links carry over to the new items that
+  match (kind, entity or normalized title, t within 60 s).
 - **`entities`**: id, kind (`book`, …), canonical (JSON: title, author, Open Library id,
   cover), plus a mention count (a view).
 - **`playback`**: episode_id, position_s, speed, finished, updated_at. **`queue`** (Up Next):
@@ -533,33 +551,151 @@ hearsay/
 Tests fake the colab CLI and tunnel, as Degas does, and run the real worker app over ASGI with
 stub models, so CI needs no GPU or model weights.
 
-## 13. Implementation phases
+## 13. Implementation phases and milestones
 
-0. **Spikes** (a throwaway `spike/` directory):
-   - ASR benchmark on 5 of your real episodes (one with music, one with crosstalk, one in
-     another language): faster-whisper turbo + alignment + pyannote, against Parakeet, on T4
-     and L4. Measure word error rate (spot-checked), real-time factor, word-timing accuracy
-     and VRAM.
-   - Timeline drift between the original and the prepared Opus file.
-   - Background playback in an iOS standalone PWA (2 h, locked, app switching).
-   - Embedding model choice from 30 labelled queries.
-   - Whether sessions survive while only the worker is busy (reuse the Degas finding).
-1. **Feeds and the player:** subscribe, OPML, download, Range serving, the player with Media
-   Session, resume and Up Next. This is useful as a plain podcast app before any GPU work.
-2. **Transcription:** worker, bundle, session manager, scheduler with thresholds and budget,
-   prepared audio, transcript storage, and the transcript view with tap to seek and
-   follow-along.
-3. **Search:** FTS5, embeddings (worker and CPU), fusion, the grouped results UI, and deep
-   links.
-4. **Extraction:** the provider interface, the books kind, Open Library resolution, the Books
-   tab, and evaluation of local against hosted (§6.3).
-5. **More kinds:** media, people, links, ad segments (with scrubber bands and skip), and
-   summaries and chapters.
-6. **Polish:** speaker naming and per-feed maps, Web Push, retention, re-transcription with a
-   new engine, and a backfill planner.
-7. **Offline (optional):** "Download to device" for a few episodes. The service worker caches
-   the audio and serves Range requests from the Cache API, and the transcript is cached too.
-   iOS storage quotas and eviction make this best-effort.
+Each phase ends with something usable on the phone. Each milestone is one mergeable slice of
+work, with a concrete check under "Done when". Milestones within a phase are done in order.
+Phases 5–7 can be reordered once Phase 4 is done.
+
+### Phase 0: Spikes
+
+Throwaway code in `spike/`. Nothing in it is imported later. The output is
+`docs/spikes.md`: the numbers, and the decisions they lead to.
+
+- **M0.1 ASR benchmark.** 5 of your real episodes (one with music, one with crosstalk, one in
+  another language). faster-whisper turbo + alignment + pyannote, against Parakeet, on T4 and
+  L4. Measure word error rate (spot-checked), real-time factor, word-timing error (against
+  ~20 hand-marked words per episode), peak VRAM and model load time.
+  *Done when:* the default engine per language and the default GPU are chosen, and real-time
+  factors are recorded for the §8.4 estimates.
+- **M0.2 Colab round trip.** A script using colabkit: `new` → tunnel → `Popen` a trivial
+  uvicorn → call it → `stop`. Run a long GPU job while the kernel sits idle, to answer the
+  liveness question (§5.3). Record time-to-ready and the maximum session lifetime.
+  *Done when:* the scripted round trip works unattended, and the keepalive decision is
+  written down.
+- **M0.3 Timeline drift.** Compare word times on the original against the prepared Opus file.
+  *Done when:* drift stays under 50 ms over 2 h on at least 3 MP3s and 2 AACs, or a
+  correction is chosen.
+- **M0.4 iOS background playback.** A minimal PWA behind `tailscale serve`, with one
+  `<audio>` element and Media Session.
+  *Done when:* 2 h of locked playback, plus app switching, works on the current iOS, or the
+  §14 fallback is adopted.
+- **M0.5 Embedding model.** 30 labelled queries over the M0.1 transcripts plus a few more
+  episodes. Compare recall@10 and CPU latency for 2–3 candidate models.
+  *Done when:* a model and revision are pinned, and query embedding takes under 150 ms on the
+  home box.
+
+### Phase 1: Feeds and the player
+
+A plain podcast app, with no GPU work.
+
+- **M1.1 Skeleton.** The repository layout (§12), `hearsay serve`, `hearsay.toml` loading,
+  the SQLite schema with migrations, the Vite app served as static files, CI (pytest, ruff,
+  tsc, vitest), and the systemd unit with `tailscale serve`.
+  *Done when:* the empty PWA installs on the iPhone from `https://<host>.ts.net:8449`.
+- **M1.2 Feeds.** Add by URL, OPML import and export, the poller (conditional GET, jitter,
+  slow polling for dormant feeds), Podcasting 2.0 fields, the image cache, and per-feed policy
+  and backfill N. The Library tab.
+  *Done when:* your own OPML imports and polls for a day with no unexplained errors.
+- **M1.3 Downloads.** The `tasks` table and runner (download stage only), 2 concurrent
+  downloads, resume, content-addressed storage, `ffprobe`, and guid/sha256 change handling.
+  *Done when:* killing the server mid-download and restarting it finishes the file with the
+  right sha256, and no task runs twice.
+- **M1.4 Player.** The Range audio endpoint, one long-lived `<audio>` element, the
+  mini-player, Media Session, skip, speed, sleep timer, resume (`sendBeacon`), feed chapters,
+  and Up Next with auto-advance.
+  *Done when:* you've used Hearsay as your podcast app for a week, and the M0.4 checks pass
+  on the real app.
+
+### Phase 2: Transcription
+
+- **M2.1 Worker.** `hearsay_worker` with `spec.py`, `/health`, `/transcribe`, `/jobs`,
+  `/state`, and one job slot. ASR, alignment and diarization sit behind interfaces with stub
+  models for tests. The output is the §5.1 transcript JSON.
+  *Done when:* ASGI tests pass with stubs, and a real episode produces a valid transcript on a
+  hand-started Colab VM.
+- **M2.2 One episode, end to end.** The prepare stage (ffmpeg), the session manager (bundle
+  hash and upload, `pip install`, bootstrap, health poll, stop), the worker client (scp up,
+  JSON down, two in flight), transcript storage and the `segments` table, and Process now on
+  the episode screen.
+  *Done when:* tapping Process now starts a VM, transcribes the episode, stores the
+  transcript and stops the VM, with no manual steps.
+- **M2.3 Transcript view.** The virtualized list, segment and word highlighting, tap and
+  long-press to seek, Back to now, deep links (`/e/<id>?t=`), and find-in-transcript.
+  *Done when:* the word highlight visibly tracks the speech at 1× and 2×, and a deep link
+  opens at the right moment from a cold start.
+- **M2.4 Automatic scheduling.** Backlog thresholds, priority order, idle grace, session
+  rotation at `max_session_hours`, GPU fallback, budget and reserve checks (before `new` and every 5 min), the measured
+  real-time factor, SSE events, the GPU chip and the Session sheet.
+  *Done when:* for a week, new episodes from `auto` feeds are transcribed with no action from
+  you, spend stays under the cap, and no session outlives its idle grace.
+- **M2.5 Recovery.** Restart with a live session (`colab status`, re-tunnel, `GET /state`),
+  re-queueing when the VM is gone, idempotent results, retries with backoff, and stage errors
+  with Retry in the UI.
+  *Done when:* each fault (server killed mid-drain, VM stopped mid-episode, tunnel dropped)
+  ends with every episode transcribed exactly once. This is tested with fakes in CI, and once
+  for real.
+
+### Phase 3: Search
+
+- **M3.1 Keyword search.** FTS5 over the current transcript version's segments, query
+  handling (FTS5 syntax passed through, otherwise quoted), snippets, grouping by episode, and
+  the Search tab, with each result opening the player at its timestamp.
+  *Done when:* exact-phrase queries find known moments, with p95 under 50 ms on a synthetic
+  1,000 h library.
+- **M3.2 Semantic search.** The chunker, the CPU embedder, sqlite-vec, embedding of existing
+  transcripts in the background, and re-embedding when the model changes. All of it runs on
+  the CPU (§5.2).
+  *Done when:* the M0.5 query set reaches the recall measured in the spike.
+- **M3.3 Fusion and filters.** Reciprocal rank fusion, merging segment hits into chunk hits,
+  the mode toggle, and the show, date and speaker filters.
+  *Done when:* on the labelled set, Both has recall@10 at least as good as Exact or Meaning
+  alone.
+
+### Phase 4: Extraction
+
+- **M4.1 Framework.** The provider interface, the kinds registry, prompt and model
+  versioning, schema validation with one retry, the timestamp and quote guard, the
+  `extract:<kind>` stage, and the hosted provider. The `book` kind first.
+  *Done when:* books are extracted from every new transcript and shown on the episode screen,
+  each linked to its moment.
+- **M4.2 Books.** Open Library resolution, the `entities` roll-up, the Books tab, and the hide,
+  re-link and "?" candidate picker actions.
+  *Done when:* across the library, most book mentions resolve, and the same book mentioned in
+  different episodes shows as one row.
+- **M4.3 Provider evaluation.** 20 hand-labelled episodes, and the local vLLM provider in the
+  worker on L4. Measure book precision and recall for both providers.
+  *Done when:* a provider is chosen per kind, and §6.3 and §14 record the decision.
+
+### Phase 5: More kinds
+
+- **M5.1** `media`, `person` (merged with `podcast:person`) and `link`, plus the Media and
+  People segments of the Books tab.
+- **M5.2** `ad_segment`, with scrubber bands and Skip ad, plus `summary` and generated
+  chapters for feeds without chapters.
+
+*Done when:* each kind can be backfilled over the whole library as a background job, on its
+own.
+
+### Phase 6: Polish
+
+- **M6.1 Speakers.** Renaming per episode, per-feed default maps applied as guesses, and the
+  speaker filter using names.
+- **M6.2 Web Push.** VAPID keys, subscription, batched "N new episodes" notifications, budget
+  warnings, and feed errors.
+- **M6.3 Retention.** `audio_keep_days`, streaming fallback with the offset note, and
+  Re-download.
+- **M6.4 Re-transcription and backfill planning.** New transcript versions with an
+  `is_current` switch, swapping the index, re-extraction with hidden flags and entity links
+  carried over, carrying speaker names over, and a backfill planner with GPU-time and
+  compute-unit estimates.
+
+### Phase 7: Offline (optional)
+
+- **M7.1** "Download to device" for a few episodes. The service worker caches the audio and
+  serves Range requests from the Cache API, and the transcript is cached too. iOS storage
+  quotas and eviction make this best-effort.
+  *Done when:* a downloaded episode plays in airplane mode with its transcript and seeking.
 
 ## 14. Risks and open questions
 
@@ -574,7 +710,8 @@ stub models, so CI needs no GPU or model weights.
 - **Diarization quality** on crosstalk-heavy shows. Speaker labels are shown as best effort,
   and per-feed diarization can be turned off.
 - **Colab supply and reclaim:** a drain may be cut off mid-episode. Tasks are idempotent and
-  re-queue, so the cost is lost GPU time, not lost data.
+  re-queue, so the cost is lost GPU time, not lost data. Planned rotation at
+  `max_session_hours` (§5.3) keeps long backfills from running into the lifetime limit.
 - **Feed transcripts:** should a good publisher transcript (with timings, such as SRT or
   VTT) replace ASR to save GPU time? The default is no. Revisit once the real-time factor is
   known, since ASR may cost so little that it isn't worth the complexity.
