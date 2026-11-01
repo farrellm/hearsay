@@ -548,8 +548,9 @@ The visual design, screen layouts and interaction details are in [ui.md](ui.md).
 - Host dependencies: `ffmpeg`/`ffprobe`, OpenSSH, the `colab` CLI (`uv tool install
   google-colab-cli`), and the embedding model weights (downloaded on first run, about
   0.5–1.2 GB).
-- colabkit is a pinned tarball dependency, as in Degas. Changes to the CLI wrapper or the
-  tunnel go to colabkit, then the tag is bumped.
+- colabkit is a git dependency pinned to a release tag (`[tool.uv.sources]`, `git` + `tag`),
+  as in Degas; Renovate bumps the tag and `uv.lock` together (a tarball URL is invisible to
+  it). Changes to the CLI wrapper or the tunnel go to colabkit, then the tag is bumped.
 
 ### Repository layout
 
