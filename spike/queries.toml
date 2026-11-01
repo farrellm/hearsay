@@ -1,0 +1,168 @@
+# M0.5 labelled queries over the M0.1 Whisper transcripts. t0..t1 = the span that answers the
+# query (seconds); a chunk counts as relevant if it overlaps it. Written 2026-11-01 from the
+# T4 transcripts; mostly paraphrases, so keyword overlap is low on purpose.
+
+[[q]]
+q = "the record shop that inspired the DJ when he was stuck creatively"
+ep = "music"
+t0 = 243
+t1 = 306
+[[q]]
+q = "why he only reuses the strongest kicks and snares when chopping a drum break"
+ep = "music"
+t0 = 306
+t1 = 389
+[[q]]
+q = "sampling something deliberately obvious, like a Björk record"
+ep = "music"
+t0 = 389
+t1 = 462
+[[q]]
+q = "recording his girlfriend in a cramped attic studio in the dark"
+ep = "music"
+t0 = 586
+t1 = 669
+[[q]]
+q = "matching the pitch of samples before time-stretching software existed"
+ep = "music"
+t0 = 716
+t1 = 804
+[[q]]
+q = "gear for hiking in cold weather in Iceland"
+ep = "music"
+t0 = 92
+t1 = 182
+
+[[q]]
+q = "protesters in Paris say the national debt is not their problem"
+ep = "produced"
+t0 = 184
+t1 = 264
+[[q]]
+q = "the old rule that government debt should stay under 60 percent of GDP"
+ep = "produced"
+t0 = 323
+t1 = 368
+[[q]]
+q = "penguins and orcas metaphor for which country gets hit first"
+ep = "produced"
+t0 = 368
+t1 = 427
+[[q]]
+q = "famous economist speech arguing low interest rates make debt less costly"
+ep = "produced"
+t0 = 550
+t1 = 658
+[[q]]
+q = "in German the word for debt also means guilt"
+ep = "produced"
+t0 = 607
+t1 = 658
+[[q]]
+q = "why markets now see France as riskier than Greece"
+ep = "produced"
+t0 = 985
+t1 = 1091
+[[q]]
+q = "French kings repeatedly defaulted on their loans"
+ep = "produced"
+t0 = 1114
+t1 = 1168
+[[q]]
+q = "bond spread versus Germany as a fear gauge"
+ep = "produced"
+t0 = 1168
+t1 = 1223
+[[q]]
+q = "economist decided not to publish an op-ed in case it panicked investors"
+ep = "produced"
+t0 = 1304
+t1 = 1385
+
+[[q]]
+q = "she went to grad school in her thirties after being a schoolteacher"
+ep = "interview"
+t0 = 242
+t1 = 353
+[[q]]
+q = "avoiding an argument with your brother-in-law at Thanksgiving by where you sit"
+ep = "interview"
+t0 = 889
+t1 = 1090
+[[q]]
+q = "Jewish story about keeping a special coat for getting angry"
+ep = "interview"
+t0 = 1846
+t1 = 1960
+[[q]]
+q = "we are corks carried by the current, not captains of our ship"
+ep = "interview"
+t0 = 2017
+t1 = 2124
+[[q]]
+q = "soldiers in Vietnam using heroin and quitting when they came home"
+ep = "interview"
+t0 = 2492
+t1 = 2699
+[[q]]
+q = "sports betting apps make gambling too convenient"
+ep = "interview"
+t0 = 2646
+t1 = 2741
+[[q]]
+q = "trying to be good rather than great"
+ep = "interview"
+t0 = 3348
+t1 = 3499
+[[q]]
+q = "Harvard Law School culture pushes students toward corporate law"
+ep = "interview"
+t0 = 4040
+t1 = 4107
+
+[[q]]
+q = "the brothers react to a Kid Rock and Eminem gospel song"
+ep = "crosstalk"
+t0 = 160
+t1 = 711
+[[q]]
+q = "which other Detroit musician could make a worse song"
+ep = "crosstalk"
+t0 = 944
+t1 = 1096
+[[q]]
+q = "argument over whether cornhole counts as athletic compared with chess"
+ep = "crosstalk"
+t0 = 1155
+t1 = 1355
+[[q]]
+q = "advice on getting free donuts when the hot light is on"
+ep = "crosstalk"
+t0 = 2532
+t1 = 2828
+[[q]]
+q = "making a sock puppet for a child"
+ep = "crosstalk"
+t0 = 2224
+t1 = 2478
+
+[[q]]
+q = "a woman adopted as a baby searching for her birth mother in Argentina"
+ep = "spanish"
+t0 = 202
+t1 = 433
+[[q]]
+q = "the midwife who sold babies and was arrested in a police raid"
+ep = "spanish"
+t0 = 2116
+t1 = 2284
+[[q]]
+q = "TV show that helped people find lost relatives"
+ep = "spanish"
+t0 = 997
+t1 = 1059
+[[q]]
+q = "padres que compraron un bebé recién nacido"
+ep = "spanish"
+t0 = 1124
+t1 = 1233

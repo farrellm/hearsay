@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>Hearsay spike</title>
+<style>
+  :root { color-scheme: dark; --bg: #111; --fg: #eee; --dim: #999; --acc: #f2c14e; }
+  body { margin: 0; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); background: var(--bg); color: var(--fg);
+         font: 16px/1.4 -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  .ep { border: 1px solid #333; border-radius: 10px; padding: 10px; margin: 0 0 10px; }
+  .ep b { display: block; } .ep small { color: var(--dim); }
+  button { font: inherit; background: #2a2a33; color: var(--fg); border: 0; border-radius: 8px; padding: 8px 12px; margin: 4px 4px 0 0; }
+  button.acc { background: var(--acc); color: #111; }
+  #now { position: sticky; top: 0; background: var(--bg); padding: 8px 0; border-bottom: 1px solid #333; margin-bottom: 12px; }
+  #status { color: var(--dim); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .probes button { font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Hearsay — iOS playback spike</h1>
+<div id="now">
+  <div id="title">Nothing playing</div>
+  <div id="status"></div>
+  <button id="back">−15</button><button id="pp" class="acc">Play</button><button id="fwd">+30</button>
+  <button id="speed">1×</button>
+</div>
+<p style="color:var(--dim);font-size:14px">1. Add to Home Screen and open from there. 2. Play an episode, lock the phone, leave it ~2 h (switch apps a few times too).
+3. Seek check: tap a word button — playback starts 0.3 s before it; the word should be heard within the first second.</p>
+<div id="eps"></div>
+<audio id="a" preload="metadata"></audio>
+<script>
+const a = document.getElementById("a");  // one long-lived element; only its src changes
+const $ = (id) => document.getElementById(id);
+let cur = null, speeds = [1, 1.5, 2, 3], si = 0, lastBeat = 0;
+const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+
+function fmt(t) { t = Math.floor(t || 0); return `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; }
+function beat(ev) {
+  const rec = { ev, ep: cur && cur.id, ct: a.currentTime, dur: a.duration, paused: a.paused, rate: a.playbackRate,
+                vis: document.visibilityState, standalone, wall: Date.now() / 1000 };
+  const body = JSON.stringify(rec);
+  if (ev === "pagehide" || ev === "hidden") navigator.sendBeacon("/api/log", new Blob([body], { type: "application/json" }));
+  else fetch("/api/log", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+}
+function load(ep, t = 0, autoplay = true) {
+  if (!cur || cur.id !== ep.id) {
+    cur = ep; a.src = `/audio/${ep.id}`;
+    $("title").textContent = `${ep.show} — ${ep.title}`;
+    navigator.mediaSession.metadata = new MediaMetadata({ title: ep.title, artist: ep.show, album: "Hearsay spike",
+      artwork: [{ src: "/icon.svg", sizes: "512x512", type: "image/svg+xml" }] });
+  }
+  const go = () => { a.currentTime = t; if (autoplay) a.play(); };
+  if (a.readyState >= 1) go(); else a.addEventListener("loadedmetadata", go, { once: true });
+  beat("load");
+}
+function seekBy(d) { a.currentTime = Math.max(0, Math.min(a.duration || 1e9, a.currentTime + d)); }
+$("pp").onclick = () => (a.paused ? a.play() : a.pause());
+$("back").onclick = () => seekBy(-15); $("fwd").onclick = () => seekBy(30);
+$("speed").onclick = () => { si = (si + 1) % speeds.length; a.playbackRate = speeds[si]; $("speed").textContent = speeds[si] + "×"; };
+const ms = navigator.mediaSession;
+ms.setActionHandler("play", () => a.play()); ms.setActionHandler("pause", () => a.pause());
+ms.setActionHandler("seekbackward", () => seekBy(-15)); ms.setActionHandler("seekforward", () => seekBy(30));
+ms.setActionHandler("seekto", (d) => { a.currentTime = d.seekTime; });
+ms.setActionHandler("previoustrack", () => seekBy(-15)); ms.setActionHandler("nexttrack", () => seekBy(30));
+a.addEventListener("play", () => { $("pp").textContent = "Pause"; ms.playbackState = "playing"; beat("play"); });
+a.addEventListener("pause", () => { $("pp").textContent = "Play"; ms.playbackState = "paused"; beat("pause"); });
+a.addEventListener("ended", () => beat("ended"));
+a.addEventListener("error", () => beat("error:" + (a.error && a.error.code)));
+a.addEventListener("timeupdate", () => {
+  $("status").textContent = `${fmt(a.currentTime)} / ${fmt(a.duration)} · ${standalone ? "standalone" : "browser tab"}`;
+  if (a.duration) ms.setPositionState({ duration: a.duration, position: Math.min(a.currentTime, a.duration), playbackRate: a.playbackRate });
+  if (Date.now() - lastBeat > 10000) { lastBeat = Date.now(); beat("tick"); }
+});
+document.addEventListener("visibilitychange", () => beat(document.visibilityState));
+addEventListener("pagehide", () => beat("pagehide"));
+
+fetch("/api/episodes").then((r) => r.json()).then((eps) => {
+  for (const ep of eps) {
+    const d = document.createElement("div"); d.className = "ep";
+    d.innerHTML = `<b></b><small></small><div class="probes"></div>`;
+    d.querySelector("b").textContent = ep.title;
+    d.querySelector("small").textContent = `${ep.show} · ${ep.type}`;
+    const p = d.querySelector(".probes");
+    const play = document.createElement("button"); play.className = "acc"; play.textContent = "Play from start";
+    play.onclick = () => load(ep, 0); p.append(play);
+    for (const w of ep.probes) {
+      const b = document.createElement("button"); b.textContent = `${fmt(w.s)} “${w.w}”`;
+      b.onclick = () => { load(ep, Math.max(0, w.s - 0.3)); beat("probe:" + w.w + "@" + w.s); };
+      p.append(b);
+    }
+    $("eps").append(d);
+  }
+});
+</script>
+</body>
+</html>

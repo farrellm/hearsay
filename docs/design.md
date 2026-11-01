@@ -100,8 +100,8 @@ discovered ─▶ downloaded ─▶ prepared ─▶ transcribed ─▶ indexed �
    hour is about 14 MB, compared with 50–100 MB for the original MP3, which matters on a home
    uplink. The original file is kept for playback.
    - Both files must share one timeline, so timestamps on the prepared file are valid on the
-     original. ffmpeg's decode handles MP3 encoder delay and Opus pre-skip. Phase 0 checks
-     the drift on real MP3s and AACs: it must stay under 50 ms over 2 h.
+     original. ffmpeg's decode handles MP3 encoder delay and Opus pre-skip. Phase 0 measured
+     the offset on 6 MP3s and 3 AACs (up to 3.7 h) at under 0.1 ms, with no drift.
 4. **Transcribe** (GPU). Upload the prepared file and get back a transcript JSON (§5.1).
 5. **Index** (server). Write segments into SQLite and FTS5. Write embedding chunks into
    sqlite-vec.
@@ -160,25 +160,34 @@ The worker has one GPU job slot. Requests queue in the worker, and the server ke
 episodes in flight: one running, one uploaded and waiting. That hides upload time behind
 compute.
 
-**ASR stack (the default; Phase 0 confirms it with a benchmark):**
+**ASR stack (benchmarked in Phase 0, [spikes.md](spikes.md) §M0.1):**
 
 - **ASR:** `faster-whisper` with `large-v3-turbo` on CTranslate2 fp16, Silero VAD, and
-  batched inference. It handles many languages, adds punctuation and casing well, and is
-  fast: Phase 0 measures how many minutes of audio it processes per GPU-minute on T4 and L4.
-- **Word timestamps:** WhisperX-style forced alignment with a wav2vec2 model per language,
-  because Whisper's own word timings are loose. Tight word timings matter for seeking from a
-  tapped word and for highlighting along with playback.
-- **Diarization:** `pyannote/speaker-diarization-3.1` (a gated model, so it needs the HF
-  token). It is on by default, but you can turn it off per feed (solo shows). Speakers come
+  batched inference (batch 16). It handles many languages and adds punctuation and casing
+  well. It runs at 52× real time on a T4 and 90× on an L4. The language hint is the feed's
+  `<language>` (or a per-feed override). Auto-detection runs only when there's none: in
+  Phase 0 it mislabelled a Spanish show whose episode opens with English ads.
+- **Segments:** the batched pipeline returns ~30 s VAD chunks, so the worker rebuilds
+  segments from the word timings. It splits at sentence ends, speaker changes and pauses of
+  1 s or more, with a 30 s cap. It also drops known Whisper hallucinations ("Thanks for
+  watching", "¡Suscríbete al canal!") on segments that are mostly non-speech.
+- **Word timestamps:** forced alignment with torchaudio's multilingual `MMS_FA` wav2vec2
+  model, a single model for all languages. Whisper's own word timings run about 90 ms early,
+  and they're loose. Tight word timings matter for seeking from a tapped word and for
+  highlighting along with playback.
+- **Diarization:** still open (spikes.md §M0.1.6). The candidates are
+  `pyannote/speaker-diarization-community-1` (pyannote 4.x; 3.x no longer installs on the
+  Colab image, and the model is gated, so it needs the HF token) and NVIDIA's ungated
+  `diar_streaming_sortformer_4spk-v2` (at most 4 speakers, and it pulls in NeMo). It is on by
+  default, but you can turn it off per feed (solo shows). Speakers come
   back as `S0`, `S1`, …. You can rename a speaker per episode, and a per-feed default name
   map ("S0 is usually the host") is applied to new episodes as a guess, not as a fact.
   Re-transcribing relabels everyone, so names carry over by time overlap: each new speaker
   takes the name of the old speaker they share the most speaking time with, if that's over
   half of the new speaker's time. Carried-over names keep their guessed or confirmed state.
   Speakers with no match fall back to the per-feed map.
-- **Alternative to benchmark:** NVIDIA Parakeet TDT (English only). It is much faster and has
-  native word timestamps. If the library is mostly English and it wins on accuracy, it
-  becomes the English default, with Whisper as the fallback for other languages.
+- **Rejected: NVIDIA Parakeet TDT 0.6B v3.** It is only slightly faster (66× vs. 52× on a
+  T4), and it silently dropped whole minutes of speech near music, and in Spanish.
 - The ASR model, version and settings are stored with every transcript
   (`transcripts.engine`). Retranscribing with a new engine creates a new transcript version,
   and the newest successful version is the current one.
@@ -203,15 +212,17 @@ A segment is roughly one sentence, split at speaker changes and pauses, and neve
 
 ### 5.2 Embeddings
 
-- **Model:** a small open embedding model that runs on the server's CPU at query time, for
-  example `Qwen3-Embedding-0.6B` or `bge-small-en-v1.5`. Phase 0 picks it, using a
-  hand-labelled query set from your own library. Query embedding must work when no GPU session
-  is up, so the query side is always the CPU.
+- **Model:** `BAAI/bge-small-en-v1.5` at revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`
+  (384 dimensions), chosen in Phase 0 (spikes.md §M0.5). It takes 16 ms per query and about
+  10 s of CPU per audio hour for documents on the home box. Qwen3-Embedding-0.6B was far too
+  slow on that CPU. Query embedding must work when no GPU session is up, so the query side is
+  always the CPU. Cross-lingual queries (English questions about a Spanish show) are its weak
+  spot. Revisit if the library gets much non-English audio.
 - **Documents:** chunks of 45–60 s, cut at segment boundaries, with a 1-segment overlap and
   the speaker names inline. Each chunk is prefixed with the show and episode title, for
   context. One hour gives about 70 chunks.
 - In v1 the server embeds every chunk on its CPU, in the index stage. That's about 70 chunks
-  per hour of audio, a few seconds of work, and it means only one copy of the model has to be
+  per hour of audio, about 10 s of work, and it means only one copy of the model has to be
   kept at a pinned revision. The model id is stored with each vector, and changing the model
   re-embeds everything in the background.
 - Later, if a model change makes re-embedding the whole library on the CPU too slow, the
@@ -245,8 +256,9 @@ Degas starts sessions by hand. Hearsay starts them from the backlog.
 - **Stop** when the queue is empty and stays empty for `idle_grace_minutes` (default 5, so a
   feed poll that lands mid-drain doesn't cause a restart), or when the budget runs out. Stop
   with `cli.stop(session)` and confirm with `status`.
-- **Session lifetime:** Colab VMs have a maximum lifetime (Phase 0 measures it). The
-  scheduler sets `max_session_hours` a safe margin below it. Once a session passes that age,
+- **Session lifetime:** Colab VMs have a maximum lifetime. Phase 0 didn't measure it, so
+  `max_session_hours` defaults to 10. Each session's age at an unexpected reclaim is logged,
+  so the real limit shows up from use. Once a session passes that age,
   it stops handing out new episodes, lets the ones in flight finish, stops, and starts a fresh
   session if the backlog still meets the start rule. A long backfill becomes several
   sessions instead of one that gets cut off.
@@ -269,9 +281,13 @@ Degas starts sessions by hand. Hearsay starts them from the backlog.
   by episode and stage, and records the input it was run on (`tasks.input_ref`). A result
   whose input no longer matches the episode (a re-downloaded file, or a newer transcript
   version) is discarded.
-- **Liveness:** the same open question as in Degas: whether a VM whose kernel is idle and
-  only the SSH-launched worker is busy gets reclaimed. Whatever answer Degas settles on, use
-  it. If it's needed, send a trivial `colab exec` every few minutes during a drain.
+- **Liveness:** in Phase 0, a VM whose kernel sat idle for 45 min, while only the
+  SSH-launched worker was busy, was not reclaimed. So there's no `exec` heartbeat by default.
+  It stays available as a setting (`keepalive_exec_minutes`, off). Unexpected `SessionGone`s
+  are logged with the kernel's idle time.
+- **Never do long work inside `colab exec`.** An `exec` that prints nothing for about a minute
+  can return early and leave its work unfinished. `exec` only `Popen`s the detached worker.
+  Its `--env` values persist in the kernel, so per-job settings never go through `--env`.
 
 ## 6. LLM extraction
 
@@ -520,9 +536,9 @@ The visual design, screen layouts and interaction details are in [ui.md](ui.md).
 
 ## 12. Deployment
 
-- `hearsay serve` runs a single process on `127.0.0.1:<port>`. `tailscale serve
-  --bg --https=<port>` exposes it, using the next free HTTPS port after Degas's 8448
-  (8449).
+- `hearsay serve` runs a single process on `127.0.0.1:8452`. `tailscale serve
+  --bg --https=8452` exposes it. 8449 went to AisleFlow, and the reservation is recorded in
+  `~/workspace/TAILSCALE_PORTS.md`.
 - A systemd user unit `deploy/hearsay.service`, with the same pattern as Degas:
   `Restart=always`, `tailscale serve` in `ExecStartPost`, and linger enabled.
 - Config lives in `hearsay.toml`: data dir, `colab` binary and auth mode, SSH key path, HF
@@ -594,7 +610,7 @@ A plain podcast app, with no GPU work.
 - **M1.1 Skeleton.** The repository layout (§12), `hearsay serve`, `hearsay.toml` loading,
   the SQLite schema with migrations, the Vite app served as static files, CI (pytest, ruff,
   tsc, vitest), and the systemd unit with `tailscale serve`.
-  *Done when:* the empty PWA installs on the iPhone from `https://<host>.ts.net:8449`.
+  *Done when:* the empty PWA installs on the iPhone from `https://<host>.ts.net:8452`.
 - **M1.2 Feeds.** Add by URL, OPML import and export, the poller (conditional GET, jitter,
   slow polling for dormant feeds), Podcasting 2.0 fields, the image cache, and per-feed policy
   and backfill N. The Library tab.

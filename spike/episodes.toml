@@ -1,0 +1,56 @@
+# Phase 0 test episodes (public shows, chosen 2026-11-01). `match` is a substring of the item title.
+# role: what the episode is for. bench = M0.1/M0.5 ASR set; drift = M0.3 only.
+
+[[ep]]
+id = "music"
+role = "bench"  # music under/between speech
+feed = "https://feed.songexploder.net/SongExploder"
+match = "DJ Shadow - Mutual Slump"
+
+[[ep]]
+id = "crosstalk"
+role = "bench"  # three brothers talking over each other
+feed = "https://feeds.simplecast.com/wjQvYtdl"
+match = "MBMBaM 837"
+
+[[ep]]
+id = "spanish"
+role = "bench"  # Spanish, narrative, publisher transcript with timestamps
+feed = "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/b3c9b6e7-72ba-45c4-aff9-b1e7012d213b/092b66a8-4329-4183-bb12-b1e7012d216f/podcast.rss"
+match = "Partida de nacimiento"
+
+[[ep]]
+id = "interview"
+role = "bench"  # two-person interview, mentions books
+feed = "https://feeds.simplecast.com/wgl4xEgL"
+match = "Angela Duckworth"
+
+[[ep]]
+id = "produced"
+role = "bench"  # heavily produced NPR show, many voices, music beds
+feed = "https://feeds.npr.org/510289/podcast.xml"
+match = "great international borrowing spree"
+
+[[ep]]
+id = "long-mp3"
+role = "drift"  # 2 h+ MP3
+feed = "https://lexfridman.com/feed/podcast/"
+index = 0
+
+[[ep]]
+id = "aac-music"
+role = "drift"  # 2 h AAC (DJ set)
+feed = "https://dj.adamlove.com.au/feed/m4a/"
+match = "15th August 2026 - Part 2"
+
+[[ep]]
+id = "aac-anchor"
+role = "drift"  # Spotify-for-Creators (anchor) m4a upload, speech
+feed = "https://anchor.fm/s/f6a58c54/podcast/rss"
+match = "ResiDesk"
+
+[[ep]]
+id = "aac-blubrry"
+role = "drift"  # blubrry m4a, speech
+feed = "http://feeds.feedburner.com/BaseballPhD-M4a"
+match = "2026 World Series Review"
