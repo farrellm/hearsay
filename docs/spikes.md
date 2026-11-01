@@ -7,13 +7,13 @@ Status by milestone:
 
 | Milestone | Status |
 | --- | --- |
-| M0.1 ASR benchmark | **Engine and GPU chosen.** Diarization model still open: pyannote needs HF access (§M0.1.6). The hand-marked word check is still open (§M0.1.4). |
+| M0.1 ASR benchmark | **Done**: Whisper turbo + MMS_FA, pyannote `community-1` diarization, T4. The hand-marked word check is still open (§M0.1.4). |
 | M0.2 Colab round trip | **Done.** The keepalive decision is made. The maximum session lifetime was not measured (your call): `max_session_hours = 10` |
 | M0.3 Timeline drift | **Done.** No drift. |
 | M0.4 iOS background playback | **Built, waiting on you.** It needs a 2 h test on the phone (§M0.4) |
 | M0.5 Embedding model | **Done.** `bge-small-en-v1.5`, pinned; 16 ms per query on the home box |
 
-Spend: 2.4 compute units in all (T4 about 1 h, L4 about 25 min, CPU runtime about 50 min).
+Spend: 2.7 compute units in all (T4 about 1.5 h, L4 about 25 min, CPU runtime about 50 min).
 
 ## Test episodes
 
@@ -88,16 +88,18 @@ Real-time factor = audio minutes per GPU minute, over all 3.7 h of audio.
 | --- | --- | --- | --- |
 | Whisper turbo | 52× | 90× | 4.1–5.4 GB |
 | MMS_FA alignment | 55× | 140× | 2.5–3.1 GB on its own² |
-| Sortformer diarization | 155× | 228× | 1.2–4.2 GB |
+| pyannote `community-1` diarization | 22× | (not run) | 4.2 GB |
+| (Sortformer, not chosen) | 155× | 228× | 1.2–4.2 GB |
 | (Parakeet, rejected) | 66× | 130× | 11–14 GB |
-| **Whole pipeline** (Whisper + align + diarize, in sequence) | **≈ 23×** | **≈ 44×** | well under 16 GB |
+| **Whole pipeline** (Whisper + align + pyannote, in sequence) | **≈ 12×** | (≈ 23×, estimated) | well under 16 GB |
+| Without diarization (solo feeds) | ≈ 27× | ≈ 55× | |
 
 ² Higher numbers in `summary.md` include memory the earlier Whisper stage still held in the
 same process.
 
 Model load: Whisper 2–12 s and MMS_FA 3–12 s, once the weights are cached on the VM. A first
 download on a fresh VM adds about a minute. For the §8.4 estimates, **one hour of audio takes
-about 2.6 GPU-minutes on a T4 and 1.4 on an L4.** The L4 is about twice as fast, but
+about 5 GPU-minutes on a T4 with diarization, and 2.2 without.** The L4 is about twice as fast, but
 by Colab's published rates (not measured here) it bills at about 2.5 times the T4's rate, so
 the T4 is cheaper per audio hour. M2.4 replaces
 these numbers with measured `colab usage` rates.
@@ -128,24 +130,38 @@ more, with a 30 s cap. That gives the §5.1 segment shape. Do this before the sp
 are assigned, because the "segment purity" figures below were measured on the raw 27 s
 chunks.
 
-### 6. Diarization: open
+### 6. Diarization: pyannote `community-1`
 
-- **pyannote is blocked.** Your HF token hasn't accepted the gated terms for
-  `pyannote/speaker-diarization-3.1` or `pyannote/speaker-diarization-community-1`. Also,
-  pyannote 3.x cannot be installed on the current Colab image (torchaudio 2.11 removed
-  `AudioMetaData`), so the candidate is the 4.x pipeline, **`community-1`**, not 3.1.
-  **Action for you:** accept the terms at https://hf.co/pyannote/speaker-diarization-community-1
-  (and https://hf.co/pyannote/speaker-diarization-3.1). Then re-run only the `pyannote` stage on
-  a T4, for about 0.2 compute units.
-- **NVIDIA Sortformer (`diar_streaming_sortformer_4spk-v2`) is ungated and works.** It runs
-  at 155× on a T4. It handles at most 4 speakers, and on `crosstalk` it found 2 main voices
-  for 3 brothers (talk shares of 54%, 36%, 6% and 3%). On the 2-person interview it was clean
-  (68% and 32%). The produced and Spanish shows, which have 5 or more voices, were capped at 4.
-- **Tie-breaker:** Sortformer brings in NeMo, and NeMo caused every dependency fight in this
-  spike. It pins lightning 2.4, needs a numba-cuda bump, trips a signature check in
-  `nv_one_logger`, and patches globals (e.g. `torch.load`) so that later models in the same
-  process fail to load. If pyannote community-1 is at least as good, prefer it, and keep NeMo
-  out of the worker.
+pyannote 3.x can't be installed on the current Colab image (torchaudio 2.11 removed
+`AudioMetaData`), so the pyannote candidate is the 4.x pipeline,
+`pyannote/speaker-diarization-community-1`. It is gated, and your HF token has access to it.
+(The token still gets a 403 on 3.1 and on `segmentation-3.0`, but neither is needed.) The
+other candidate is NVIDIA's ungated `diar_streaming_sortformer_4spk-v2`.
+
+`spike/diar_eval.py` gives each MMS-aligned word the speaker active at its midpoint. It then
+matches the words to the speaker-labelled publisher transcripts and maps each cluster to the
+reference speaker it overlaps most:
+
+| Episode | Real speakers | Sortformer: clusters, word accuracy | pyannote: clusters, word accuracy |
+| --- | --- | --- | --- |
+| interview | 2 | 3, 98.6% | 2, 98.4% |
+| music | 2 | 4, 99.2% | 4, 99.6% |
+| produced | 13 | 4 (its maximum), 91.0% | 8, **94.4%** |
+| crosstalk (no reference) | 3 | 4: talk shares 54/36/6/3% (two brothers merged) | 6: **45/31/22**/2% (all three found) |
+| spanish (no reference) | many | 4: 71/17/6/6% | 18: 49/12/8/6/6/4% (probably over-split) |
+
+**Decision: pyannote `community-1`.** The two are equal on 2-person shows. pyannote is better
+on many-voice and similar-voice shows. It has no 4-speaker cap, and it keeps NeMo out of the
+worker. NeMo caused every dependency fight in this spike: it pins lightning 2.4, needs a
+numba-cuda bump, trips a signature check in `nv_one_logger`, and patches globals such as
+`torch.load`, so later models in the same process fail to load.
+
+The cost is speed. pyannote runs at **22×** on a T4, against Sortformer's 155×, so it becomes
+the slowest stage. The pipeline drops from about 23× to about 12× on a T4: roughly 5
+GPU-minutes per audio hour. Two ways to recover some of that: turn diarization off for solo
+feeds (already a per-feed setting), and tune pyannote's embedding batch size in M2.1.
+Over-splitting (18 clusters on the Spanish show) matters little, because labels are guesses
+you can rename, and §5.1 carries names over by overlap.
 
 ### 7. Worker environment notes (Colab image of 2026-11)
 
@@ -221,8 +237,9 @@ anything larger.
 
 The spike is `spike/ios/` (a FastAPI app with Range support, one long-lived `<audio>`,
 Media Session, and no service worker). It runs on **https://agda.tail0cb6d.ts.net:8452**,
-started by hand with `uv run spike/ios/server.py` and
-`tailscale serve --bg --https=8452 http://127.0.0.1:8452`.
+running as the transient user unit `hearsay-spike-ios` (`systemd-run --user ... uv run
+spike/ios/server.py`, so it outlives the shell that started it), with `tailscale serve --bg
+--https=8452 http://127.0.0.1:8452`. Stop it with `systemctl --user stop hearsay-spike-ios`.
 
 To do on the iPhone:
 1. Open the URL in Safari, choose Share → Add to Home Screen, and open it from the icon.
@@ -276,9 +293,10 @@ Caveats:
   and `~/workspace/TAILSCALE_PORTS.md` is updated.
 - §5.1: the ASR stack is Whisper turbo + MMS_FA alignment, and Parakeet is dropped. The
   language hint comes from the feed, and segments are rebuilt from word timings. Diarization
-  is still open.
+  is pyannote `community-1`.
 - §5.3: no keepalive by default, and `max_session_hours = 10`. Long work runs detached, never
   inside `exec`.
-- §8.4: the starting real-time factors are T4 ≈ 23× and L4 ≈ 44× for the whole pipeline.
+- §8.4: the starting real-time factor for the whole pipeline on a T4 is ≈ 12× (≈ 27× without
+  diarization).
 - §3: drift is measured, and none was found.
 - §5.2: the embedding model is `bge-small-en-v1.5` at a pinned revision.

@@ -1,6 +1,6 @@
 # Hearsay — Design Document
 
-Status: draft, 2026-11-01. Nothing is built yet.
+Status: draft, 2026-11-01. Phase 0 (spikes) is done except the iPhone check; see [spikes.md](spikes.md).
 
 ## 1. Overview
 
@@ -175,11 +175,11 @@ compute.
   model, a single model for all languages. Whisper's own word timings run about 90 ms early,
   and they're loose. Tight word timings matter for seeking from a tapped word and for
   highlighting along with playback.
-- **Diarization:** still open (spikes.md §M0.1.6). The candidates are
-  `pyannote/speaker-diarization-community-1` (pyannote 4.x; 3.x no longer installs on the
-  Colab image, and the model is gated, so it needs the HF token) and NVIDIA's ungated
-  `diar_streaming_sortformer_4spk-v2` (at most 4 speakers, and it pulls in NeMo). It is on by
-  default, but you can turn it off per feed (solo shows). Speakers come
+- **Diarization:** `pyannote/speaker-diarization-community-1` (pyannote 4.x; 3.x no longer
+  installs on the Colab image). It's a gated model, so it needs the HF token. In Phase 0 it
+  beat NVIDIA Sortformer on many-voice and similar-voice shows, and it keeps NeMo out of the
+  worker (spikes.md §M0.1.6). It runs at 22× on a T4, the slowest stage, so the whole
+  pipeline runs at about 12× with it and about 27× without. It is on by default, but you can turn it off per feed (solo shows). Speakers come
   back as `S0`, `S1`, …. You can rename a speaker per episode, and a per-feed default name
   map ("S0 is usually the host") is applied to new episodes as a guess, not as a fact.
   Re-transcribing relabels everyone, so names carry over by time overlap: each new speaker
@@ -196,7 +196,7 @@ compute.
 
 ```json
 {
-  "engine": {"asr": "faster-whisper/large-v3-turbo", "align": "wav2vec2-...", "diarize": "pyannote-3.1"},
+  "engine": {"asr": "faster-whisper/large-v3-turbo", "align": "torchaudio/MMS_FA", "diarize": "pyannote/community-1"},
   "language": "en",
   "duration_s": 3712.4,
   "speakers": ["S0", "S1"],
