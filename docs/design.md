@@ -500,6 +500,8 @@ of T4 time" prompts, and the compute-unit estimates.
 
 ## 11. Frontend
 
+The visual design, screen layouts and interaction details are in [ui.md](ui.md).
+
 - **Stack:** React 19, Vite, TypeScript, TanStack Query and `vite-plugin-pwa`, matching
   Degas, so conventions, components and the deploy recipe carry over. Transcripts use a
   virtualized list (`@tanstack/react-virtual`).
